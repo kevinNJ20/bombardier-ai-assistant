@@ -54,26 +54,227 @@ const BombardierAIAssistant = () => {
   const callAIService = async (endpoint, data = {}) => {
     try {
       setIsLoading(true);
+      
+      console.log(`🚀 Calling API: ${API_BASE}${endpoint}`, data);
+      
       const response = await fetch(`${API_BASE}${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Accept': 'application/json',
         },
         body: JSON.stringify(data)
       });
       
+      console.log(`📡 Response status: ${response.status}`);
+      
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        const errorText = await response.text();
+        console.error(`❌ HTTP Error ${response.status}:`, errorText);
+        throw new Error(`Erreur HTTP ${response.status}: ${errorText}`);
       }
       
-      return await response.json();
+      const result = await response.json();
+      console.log(`✅ API Response:`, result);
+      
+      return result;
     } catch (error) {
-      console.error('API Error:', error);
-      addMessage('error', `Erreur API: ${error.message}`, null, endpoint);
+      console.error('❌ API Error:', error);
       throw error;
     } finally {
-      setIsLoading(false);
+      try {
+        setIsLoading(false);
+      } catch (e) {
+        console.warn('Component may have been unmounted');
+      }
     }
+  };
+
+  const formatServiceResponse = (response, serviceType) => {
+    console.log(`🔍 Formatting response for service: ${serviceType}`, response);
+    
+    if (!response) {
+      return { content: 'Aucune réponse reçue', metadata: {} };
+    }
+
+    if (response.error || !response.success) {
+      const errorMsg = response.error?.description || response.message || 'Erreur inconnue';
+      return { 
+        content: `❌ Erreur: ${errorMsg}`, 
+        metadata: response.error || {} 
+      };
+    }
+
+    let content = '';
+    let metadata = response.metadata || {};
+
+    switch (serviceType) {
+      case 'chat-answer':
+      case 'chat-answer-memory':
+        if (response.answer && response.answer.response) {
+          content = response.answer.response;
+        } else if (response.answer) {
+          content = response.answer;
+        } else {
+          content = 'Réponse vide reçue';
+        }
+        break;
+        
+      case 'embedding-get-info':
+        if (response.answer && response.answer.response) {
+          content = `📚 **Réponse trouvée:**\n\n${response.answer.response}`;
+          
+          if (response.answer.sources && response.answer.sources.length > 0) {
+            content += `\n\n📋 **Sources consultées (${response.answer.sources.length}):**\n`;
+            response.answer.sources.forEach((source, index) => {
+              content += `\n${index + 1}. **${source.fileName}**\n`;
+              if (source.textSegment) {
+                const preview = source.textSegment.length > 150 
+                  ? source.textSegment.substring(0, 150) + '...' 
+                  : source.textSegment;
+                content += `   📄 ${preview}\n`;
+              }
+            });
+          }
+        } else if (response.answer) {
+          content = response.answer;
+        } else {
+          content = 'Aucun résultat trouvé dans la base de connaissances';
+        }
+        break;
+        
+      case 'embedding-query':
+        if (response.results) {
+          if (response.results.response) {
+            content = `🔍 **Réponse trouvée:**\n\n${response.results.response}`;
+            
+            if (response.results.sources && response.results.sources.length > 0) {
+              content += `\n\n📚 **Sources (${response.results.sources.length}):**\n`;
+              response.results.sources.forEach((source, index) => {
+                content += `\n${index + 1}. **${source.fileName}** (Score: ${(source.individualScore * 100).toFixed(1)}%)\n`;
+                if (source.textSegment) {
+                  const preview = source.textSegment.length > 150 
+                    ? source.textSegment.substring(0, 150) + '...' 
+                    : source.textSegment;
+                  content += `   📄 ${preview}\n`;
+                }
+              });
+            }
+          } else {
+            content = 'Aucun résultat trouvé pour cette recherche';
+          }
+        } else {
+          content = 'Recherche effectuée sans résultat';
+        }
+        break;
+        
+      case 'sentiment-analyze':
+        if (response.sentiment && response.sentiment.response) {
+          content = `📊 **Analyse de sentiment:** ${response.sentiment.response}`;
+          if (metadata.originalText) {
+            content += `\n\n💭 **Texte analysé:** "${metadata.originalText}"`;
+          }
+        } else if (response.sentiment) {
+          content = `📊 **Analyse de sentiment:** ${response.sentiment}`;
+        } else {
+          content = 'Analyse de sentiment non disponible';
+        }
+        break;
+        
+      case 'image-generate':
+        if (response.imageUrl && response.imageUrl.response) {
+          content = `🎨 **Image générée avec succès!**\n\n📍 **URL:** ${response.imageUrl.response}`;
+          metadata.imageUrl = response.imageUrl.response;
+        } else if (response.imageUrl && typeof response.imageUrl === 'string') {
+          content = `🎨 **Image générée avec succès!**\n\n📍 **URL:** ${response.imageUrl}`;
+          metadata.imageUrl = response.imageUrl;
+        } else {
+          content = 'Image générée mais URL non disponible';
+        }
+        break;
+        
+      case 'image-read':
+        if (response.analysis && response.analysis.response) {
+          content = `🖼️ **Analyse d'image:**\n\n${response.analysis.response}`;
+        } else if (response.analysis) {
+          content = response.analysis;
+        } else {
+          content = 'Analyse d\'image non disponible';
+        }
+        break;
+        
+      case 'image-read-scanned':
+        if (response.extractedText && response.extractedText.pages) {
+          content = `📄 **Texte extrait du document:**\n\n`;
+          response.extractedText.pages.forEach((page, index) => {
+            if (response.extractedText.pages.length > 1) {
+              content += `**Page ${page.page || index + 1}:**\n`;
+            }
+            content += `${page.response}\n\n`;
+          });
+        } else if (response.extractedText) {
+          content = `📄 **Texte extrait:**\n\n${response.extractedText}`;
+        } else {
+          content = 'Extraction de texte non disponible';
+        }
+        break;
+        
+      case 'rag-load-document':
+        if (response.answer && response.answer.response) {
+          content = `📚 **Analyse du document:**\n\n${response.answer.response}`;
+        } else if (response.answer) {
+          content = response.answer;
+        } else {
+          content = 'Document traité par RAG';
+        }
+        break;
+        
+      case 'embedding-add-document':
+      case 'embedding-add-folder':
+        content = `✅ **${response.message || 'Document ajouté avec succès'}**`;
+        if (metadata.store) {
+          content += `\n📦 **Base:** ${metadata.store}`;
+        }
+        if (metadata.contextPath) {
+          content += `\n📄 **Fichier:** ${metadata.contextPath}`;
+        }
+        break;
+        
+      case 'embedding-new-store':
+        content = `✅ **${response.message || 'Nouvelle base créée avec succès'}**`;
+        if (response.storeName) {
+          content += `\n📦 **Nom:** ${response.storeName}`;
+        }
+        break;
+        
+      case 'agent-define-prompt-template':
+        if (response.response && response.response.response) {
+          content = `🤖 **Agent Response:**\n\n${response.response.response}`;
+        } else if (response.response) {
+          content = response.response;
+        } else {
+          content = 'Template de prompt défini';
+        }
+        break;
+        
+      case 'health-check':
+        if (response.status === 'healthy') {
+          content = `✅ **Connexion API réussie**\n\n🚀 **Service:** ${response.service || 'Bombardier AI Services'}`;
+        } else if (response.success) {
+          content = `✅ **API accessible**\n\n🚀 **Service:** ${response.service || 'Bombardier AI Services'}`;
+        } else {
+          content = '❌ Service non disponible';
+        }
+        break;
+        
+      default:
+        content = response.answer || response.result || response.message || response.response || 'Réponse reçue';
+        if (typeof content === 'object') {
+          content = JSON.stringify(content, null, 2);
+        }
+    }
+
+    return { content, metadata };
   };
 
   const handleSendMessage = async () => {
@@ -105,6 +306,15 @@ const BombardierAIAssistant = () => {
           endpoint = '/ai-chain/embedding/get-info';
           requestData = { query: userInput, store: currentStore };
           break;
+        case 'embedding-query':
+          endpoint = '/ai-chain/embedding/query';
+          requestData = { 
+            question: userInput,
+            store: currentStore,
+            maxResults: 5,
+            minScore: 0.7
+          };
+          break;
         case 'rag-load-document':
           endpoint = '/ai-chain/rag/load-document';
           requestData = { 
@@ -123,10 +333,11 @@ const BombardierAIAssistant = () => {
       }
       
       response = await callAIService(endpoint, requestData);
+      const { content, metadata } = formatServiceResponse(response, selectedService);
+      addMessage('assistant', content, metadata, selectedService);
       
-      const responseContent = response.answer || response.result || response.sentiment || response.response || 'Réponse reçue';
-      addMessage('assistant', responseContent, response.metadata, selectedService);
     } catch (error) {
+      console.error('❌ Message handling error:', error);
       addMessage('error', 'Désolé, une erreur est survenue lors du traitement de votre message.');
     }
   };
@@ -146,7 +357,17 @@ const BombardierAIAssistant = () => {
           endpoint = '/ai-chain/embedding/add-document';
           requestData = {
             store: currentStore,
-            contextPath: `/uploads/${file.name}`,
+            contextPath: file.name,
+            maxSegmentSize: 2048,
+            maxOverlapSize: 512,
+            fileType: 'any'
+          };
+          break;
+        case 'embedding-add-folder':
+          endpoint = '/ai-chain/embedding/add-folder';
+          requestData = {
+            store: currentStore,
+            contextPath: file.name,
             maxSegmentSize: 2048,
             maxOverlapSize: 512,
             fileType: 'any'
@@ -156,26 +377,28 @@ const BombardierAIAssistant = () => {
           endpoint = '/ai-chain/image/read';
           requestData = {
             prompt: 'Analysez cette image technique et identifiez les composants.',
-            imageUrl: URL.createObjectURL(file)
+            contextURL: URL.createObjectURL(file)
           };
           break;
         case 'image-read-scanned':
           endpoint = '/ai-chain/image/read-scanned';
           requestData = {
             prompt: 'Effectuez une extraction OCR complète de ce document.',
-            filePath: `/uploads/${file.name}`
+            filePath: file.name
           };
           break;
         default:
           endpoint = '/ai-chain/embedding/add-document';
           requestData = {
             store: currentStore,
-            contextPath: `/uploads/${file.name}`
+            contextPath: file.name
           };
       }
       
       const response = await callAIService(endpoint, requestData);
-      addMessage('assistant', response.message || 'Document traité avec succès', response.metadata, serviceType);
+      const { content, metadata } = formatServiceResponse(response, serviceType);
+      
+      addMessage('assistant', content, metadata, serviceType);
       
       setDocuments(prev => [...prev, {
         id: Date.now(),
@@ -183,10 +406,12 @@ const BombardierAIAssistant = () => {
         size: file.size,
         type: file.type,
         processed: new Date(),
-        service: serviceType
+        service: serviceType,
+        success: response.success
       }]);
       
     } catch (error) {
+      console.error('❌ File upload error:', error);
       addMessage('error', `Erreur lors du traitement du fichier: ${error.message}`);
     }
   };
@@ -241,6 +466,13 @@ const BombardierAIAssistant = () => {
       color: 'bg-green-500'
     },
     {
+      id: 'embedding-query',
+      name: 'Recherche Avancée',
+      description: 'Recherche sémantique détaillée',
+      icon: <Search className="w-5 h-5" />,
+      color: 'bg-teal-500'
+    },
+    {
       id: 'rag-load-document',
       name: 'RAG Document',
       description: 'Analyse de document avec contexte',
@@ -262,6 +494,24 @@ const BombardierAIAssistant = () => {
       color: 'bg-pink-500'
     }
   ];
+
+  const testApiConnectivity = async () => {
+    try {
+      const response = await callAIService('/health');
+      const { content, metadata } = formatServiceResponse(response, 'health-check');
+      addMessage('system', content, metadata, 'health-check');
+    } catch (error) {
+      let errorMessage = `❌ Erreur de connexion API: ${error.message}`;
+      if (error.message.includes('404')) {
+        errorMessage += '\n💡 L\'endpoint /health n\'existe peut-être pas sur votre backend MuleSoft';
+      } else if (error.message.includes('CORS')) {
+        errorMessage += '\n💡 Problème CORS - vérifiez la configuration du serveur';
+      } else if (error.message.includes('Network')) {
+        errorMessage += '\n💡 Problème réseau - vérifiez que le serveur est démarré sur http://localhost:8081';
+      }
+      addMessage('error', errorMessage);
+    }
+  };
 
   const Sidebar = () => (
     <div className={`fixed inset-y-0 left-0 z-50 w-80 bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 transform ${
@@ -405,7 +655,7 @@ const BombardierAIAssistant = () => {
               }`}>
                 <div className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</div>
                 
-                {message.metadata && (
+                {message.metadata && Object.keys(message.metadata).length > 0 && (
                   <div className="mt-3 pt-3 border-t border-opacity-20 border-current">
                     <div className="text-xs opacity-75 space-y-1">
                       {message.service && (
@@ -417,7 +667,19 @@ const BombardierAIAssistant = () => {
                       {message.metadata.tokenUsage && (
                         <div className="flex items-center space-x-1">
                           <Cpu className="w-3 h-3" />
-                          <span>Tokens: {message.metadata.tokenUsage.totalCount || 'N/A'}</span>
+                          <span>Tokens: {message.metadata.tokenUsage.totalCount || message.metadata.tokenUsage.inputCount + message.metadata.tokenUsage.outputCount || 'N/A'}</span>
+                        </div>
+                      )}
+                      {message.metadata.imageUrl && (
+                        <div className="mt-2">
+                          <img 
+                            src={message.metadata.imageUrl} 
+                            alt="Image générée" 
+                            className="max-w-xs rounded-lg border"
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                            }}
+                          />
                         </div>
                       )}
                     </div>
@@ -428,11 +690,11 @@ const BombardierAIAssistant = () => {
                   <span className="text-xs opacity-60">{message.timestamp}</span>
                   {message.type === 'assistant' && (
                     <div className="flex items-center space-x-1">
-                      <button className="p-1 rounded hover:bg-black hover:bg-opacity-10">
+                      <button 
+                        onClick={() => navigator.clipboard.writeText(message.content)}
+                        className="p-1 rounded hover:bg-black hover:bg-opacity-10"
+                      >
                         <Copy className="w-3 h-3" />
-                      </button>
-                      <button className="p-1 rounded hover:bg-black hover:bg-opacity-10">
-                        <Star className="w-3 h-3" />
                       </button>
                     </div>
                   )}
@@ -445,9 +707,6 @@ const BombardierAIAssistant = () => {
         {isLoading && (
           <div className="flex justify-start">
             <div className="flex space-x-3">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 flex items-center justify-center">
-                <Bot className="w-5 h-5 text-white" />
-              </div>
               <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-200">
                 <div className="flex items-center space-x-2">
                   <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
@@ -614,8 +873,10 @@ const BombardierAIAssistant = () => {
               <div key={idx} className="p-4 hover:bg-gray-50 transition-colors">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center">
-                      <FileText className="w-5 h-5 text-blue-600" />
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                      doc.success ? 'bg-green-100' : 'bg-red-100'
+                    }`}>
+                      <FileText className={`w-5 h-5 ${doc.success ? 'text-green-600' : 'text-red-600'}`} />
                     </div>
                     <div>
                       <h4 className="font-medium text-gray-900 truncate max-w-xs">{doc.name}</h4>
@@ -624,7 +885,9 @@ const BombardierAIAssistant = () => {
                         <span>•</span>
                         <span>{doc.processed.toLocaleString()}</span>
                         <span>•</span>
-                        <span className="text-blue-600">{doc.service}</span>
+                        <span className={`${doc.success ? 'text-green-600' : 'text-red-600'}`}>
+                          {doc.service}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -635,7 +898,10 @@ const BombardierAIAssistant = () => {
                     <button className="p-2 text-gray-400 hover:text-green-600 transition-colors">
                       <Download className="w-4 h-4" />
                     </button>
-                    <button className="p-2 text-gray-400 hover:text-red-600 transition-colors">
+                    <button 
+                      onClick={() => setDocuments(prev => prev.filter((_, i) => i !== idx))}
+                      className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                    >
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
@@ -673,16 +939,17 @@ const BombardierAIAssistant = () => {
                 const prompt = document.getElementById('imagePrompt').value;
                 if (!prompt) return;
                 
+                console.log('🔍 Image Generation Tool - Starting with prompt:', prompt);
+                
                 try {
                   const response = await callAIService('/ai-chain/image/generate', { prompt });
-                  addMessage('assistant', 'Image générée avec succès', { 
-                    type: 'image',
-                    imageUrl: response.imageUrl,
-                    prompt: prompt
-                  }, 'image-generate');
+                  const { content, metadata } = formatServiceResponse(response, 'image-generate');
+                  
+                  addMessage('assistant', content, metadata, 'image-generate');
                   document.getElementById('imagePrompt').value = '';
                 } catch (error) {
-                  addMessage('error', 'Erreur lors de la génération d\'image');
+                  console.error('❌ Image generation error:', error);
+                  addMessage('error', `Erreur lors de la génération d'image: ${error.message}`);
                 }
               }}
               className="w-full px-4 py-2 bg-gradient-to-r from-pink-600 to-rose-600 text-white rounded-lg hover:from-pink-700 hover:to-rose-700 transition-all duration-200 hover:scale-105"
@@ -709,12 +976,26 @@ const BombardierAIAssistant = () => {
                 const text = document.getElementById('sentimentText').value;
                 if (!text) return;
                 
+                console.log('🔍 Sentiment Analysis Tool - Starting analysis with text:', text);
+                
                 try {
+                  console.log('📞 Calling sentiment analysis API...');
                   const response = await callAIService('/ai-chain/sentiment/analyze', { text });
-                  addMessage('assistant', `Analyse de sentiment: ${response.sentiment}`, response.metadata, 'sentiment-analyze');
+                  console.log('📥 Sentiment API response received:', response);
+                  
+                  console.log('🔄 Formatting response...');
+                  const { content, metadata } = formatServiceResponse(response, 'sentiment-analyze');
+                  console.log('✅ Formatted content:', content);
+                  
+                  console.log('💬 Adding message to chat...');
+                  addMessage('assistant', content, metadata, 'sentiment-analyze');
+                  console.log('🧹 Clearing input field...');
                   document.getElementById('sentimentText').value = '';
+                  console.log('✅ Sentiment analysis completed successfully');
+                  
                 } catch (error) {
-                  addMessage('error', 'Erreur lors de l\'analyse de sentiment');
+                  console.error('❌ Sentiment analysis error details:', error);
+                  addMessage('error', `Erreur lors de l'analyse de sentiment: ${error.message}`);
                 }
               }}
               className="w-full px-4 py-2 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg hover:from-green-700 hover:to-emerald-700 transition-all duration-200 hover:scale-105"
@@ -748,10 +1029,13 @@ const BombardierAIAssistant = () => {
                     maxResults: 5,
                     minScore: 0.7
                   });
-                  addMessage('assistant', 'Résultats de recherche trouvés', response, 'embedding-query');
+                  
+                  const { content, metadata } = formatServiceResponse(response, 'embedding-query');
+                  
+                  addMessage('assistant', content, metadata, 'embedding-query');
                   document.getElementById('searchQuery').value = '';
                 } catch (error) {
-                  addMessage('error', 'Erreur lors de la recherche');
+                  addMessage('error', `Erreur lors de la recherche: ${error.message}`);
                 }
               }}
               className="w-full px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all duration-200 hover:scale-105"
@@ -780,11 +1064,16 @@ const BombardierAIAssistant = () => {
                 
                 try {
                   const response = await callAIService('/ai-chain/embedding/new-store', { storeName });
-                  setStores(prev => [...prev, storeName]);
-                  addMessage('system', `Nouvelle base "${storeName}" créée avec succès`, response.metadata, 'embedding-new-store');
+                  const { content, metadata } = formatServiceResponse(response, 'embedding-new-store');
+                  
+                  if (response.success) {
+                    setStores(prev => [...prev, storeName]);
+                  }
+                  
+                  addMessage('assistant', content, metadata, 'embedding-new-store');
                   document.getElementById('newStoreName').value = '';
                 } catch (error) {
-                  addMessage('error', 'Erreur lors de la création de la base');
+                  addMessage('error', `Erreur lors de la création de la base: ${error.message}`);
                 }
               }}
               className="w-full px-4 py-2 bg-gradient-to-r from-yellow-600 to-orange-600 text-white rounded-lg hover:from-yellow-700 hover:to-orange-700 transition-all duration-200 hover:scale-105"
@@ -792,6 +1081,22 @@ const BombardierAIAssistant = () => {
               Créer Nouvelle Base
             </button>
           </div>
+        </div>
+      </div>
+
+      <div className="bg-gradient-to-br from-gray-50 to-slate-50 rounded-xl border border-gray-200 p-6">
+        <h3 className="font-semibold mb-4 flex items-center text-gray-900">
+          <Settings className="w-5 h-5 mr-2" />
+          Test de Connectivité API
+        </h3>
+        <div className="space-y-3">
+          <p className="text-sm text-gray-600">Testez la connectivité avec le backend MuleSoft</p>
+          <button
+            onClick={testApiConnectivity}
+            className="w-full px-4 py-2 bg-gradient-to-r from-gray-600 to-slate-600 text-white rounded-lg hover:from-gray-700 hover:to-slate-700 transition-all duration-200 hover:scale-105"
+          >
+            Tester la Connexion
+          </button>
         </div>
       </div>
     </div>
@@ -831,7 +1136,10 @@ const BombardierAIAssistant = () => {
                 <span className="text-green-600 font-medium">En ligne</span>
               </div>
               
-              <button className="p-2 rounded-lg text-gray-600 hover:bg-gray-100">
+              <button 
+                onClick={testApiConnectivity}
+                className="p-2 rounded-lg text-gray-600 hover:bg-gray-100"
+              >
                 <Settings className="w-5 h-5" />
               </button>
             </div>
